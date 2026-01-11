@@ -1,3 +1,4 @@
+from pathlib import Path
 import tkinter as tk
 from tkinter import filedialog, messagebox, scrolledtext
 import pandas as pd
@@ -12,9 +13,11 @@ from matplotlib.patches import Rectangle
 from scipy.stats import skew, kurtosis
 import matplotlib.patches as mpatches
 
+SCRIPT_DIR = Path(__file__).resolve().parent
+
 #Loading trained model and scaler
-model = joblib.load("logreg_model.pkl")
-scaler = joblib.load("scaler.pkl")
+model = joblib.load(SCRIPT_DIR / "logreg_model.pkl")
+scaler = joblib.load(SCRIPT_DIR / "scaler.pkl")
 
 #Data columns
 TIME_COL = "Time (s)"

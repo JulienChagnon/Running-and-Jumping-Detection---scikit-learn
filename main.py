@@ -1,3 +1,16 @@
+from pathlib import Path
+import sys
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = SCRIPT_DIR.parent
+if str(PROJECT_ROOT) not in sys.path:
+    # Ensure imports work when running from outside this directory.
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+DATA_DIR = SCRIPT_DIR
+TRAIN_DIR = SCRIPT_DIR / "train"
+TEST_DIR = SCRIPT_DIR / "tests"
+
 import matplotlib.pyplot as plt
 import warnings
 warnings.filterwarnings("ignore", category=RuntimeWarning)
@@ -6,14 +19,15 @@ warnings.filterwarnings("ignore", category=RuntimeWarning)
 # STEP 1 – DATA COLLECTION
 # ------------------------------------
 import pandas as pd
+from processing import extract_features, load_trimmed
 
 #Loading each CSV file
-julien_walking_1 = pd.read_csv("julien_walking_1.csv")
-julien_walking_2 = pd.read_csv("julien_walking_2.csv")
-julien_walking_3 = pd.read_csv("julien_walking_3.csv")
-julien_jumping_1 = pd.read_csv("julien_jumping_1.csv")
-julien_jumping_2 = pd.read_csv("julien_jumping_2.csv")
-julien_jumping_3 = pd.read_csv("julien_jumping_3.csv")
+julien_walking_1 = pd.read_csv(TEST_DIR / "julien_walking_1.csv")
+julien_walking_2 = pd.read_csv(TRAIN_DIR / "julien_walking_2.csv")
+julien_walking_3 = pd.read_csv(TRAIN_DIR / "julien_walking_3.csv")
+julien_jumping_1 = pd.read_csv(TEST_DIR / "julien_jumping_1.csv")
+julien_jumping_2 = pd.read_csv(TRAIN_DIR / "julien_jumping_2.csv")
+julien_jumping_3 = pd.read_csv(TRAIN_DIR / "julien_jumping_3.csv")
 
 #Function to add activity and subject label to DataFrame
 def label_activity_subject(df, activity, subject):
@@ -33,7 +47,16 @@ combined_data = pd.concat([
     julien_jumping_1, julien_jumping_2, julien_jumping_3
 ], ignore_index=True)
 
-print("Step 1 Complete: Data loaded and labeled.")
+#Hold out walking_1 and jumping_1 for testing only.
+train_data = pd.concat([
+    julien_walking_2, julien_walking_3,
+    julien_jumping_2, julien_jumping_3
+], ignore_index=True)
+test_data = pd.concat([
+    julien_walking_1, julien_jumping_1
+], ignore_index=True)
+
+print("Step 1 Complete: Data loaded, labeled, and split into train/test folders.")
 
 # ---------------------------------------
 # STEP 2 – DATA STORAGE
@@ -42,7 +65,7 @@ import h5py
 import numpy as np
 
 #Open HDF5 file and create raw group
-hdf5_file = h5py.File("activity_data.h5", "w")
+hdf5_file = h5py.File(DATA_DIR / "activity_data.h5", "w")
 raw_group = hdf5_file.create_group("raw")
 
 #Filtering combined data by subject
@@ -69,32 +92,6 @@ print("Step 2 Complete: Raw data stored in HDF5.")
 # STEP 3 – VISUALIZATION
 # ------------------------------------
 
-#Standardize columns in DataFrame
-def standardize_columns(df):
-    df.columns = [col.strip() for col in df.columns]
-    mapping = {
-        "Time": "Time (s)",
-        "time": "Time (s)",
-        "Time(s)": "Time (s)",
-        "x": "Acceleration x (m/s^2)",
-        "X": "Acceleration x (m/s^2)",
-        "y": "Acceleration y (m/s^2)",
-        "Y": "Acceleration y (m/s^2)",
-        "z": "Acceleration z (m/s^2)",
-        "Z": "Acceleration z (m/s^2)",
-        "Linear Acceleration x (m/s^2)": "Acceleration x (m/s^2)",
-        "Linear Acceleration y (m/s^2)": "Acceleration y (m/s^2)",
-        "Linear Acceleration z (m/s^2)": "Acceleration z (m/s^2)"
-    }
-    df.rename(columns=lambda c: mapping.get(c.strip(), c.strip()), inplace=True)
-    return df
-
-#Load and trim CSV file based on max time
-def load_trimmed(path, max_time=10):
-    df = pd.read_csv(path)
-    df = standardize_columns(df)
-    return df[df["Time (s)"] <= max_time]
-
 #Plot acceleration data on given axis
 def plot_accel(ax, df, title):
     ax.plot(df["Time (s)"], df["Acceleration x (m/s^2)"], label="X-axis")
@@ -106,8 +103,8 @@ def plot_accel(ax, df, title):
     ax.legend()
 
 #Visualization sample
-julien_walk = load_trimmed("julien_walking_1.csv")
-julien_jump = load_trimmed("julien_jumping_1.csv")
+julien_walk = load_trimmed(TEST_DIR / "julien_walking_1.csv")
+julien_jump = load_trimmed(TEST_DIR / "julien_jumping_1.csv")
 
 
 #Create subplots for each sample plot
@@ -124,8 +121,11 @@ plt.show() #Display plots
 # --------------------------------------
 
 #Fill missing values using forward filling
-preprocessed_data = combined_data.copy()
-preprocessed_data.ffill(inplace=True)
+preprocessed_train = train_data.copy()
+preprocessed_train.ffill(inplace=True)
+
+preprocessed_test = test_data.copy()
+preprocessed_test.ffill(inplace=True)
 
 #Apply moving average
 cols_to_smooth = [
@@ -135,12 +135,14 @@ cols_to_smooth = [
     "Absolute acceleration (m/s^2)"
 ]
 for c in cols_to_smooth:
-    if c in preprocessed_data.columns:
-        preprocessed_data[c] = preprocessed_data[c].rolling(window=10, center=True, min_periods=1).mean()
+    if c in preprocessed_train.columns:
+        preprocessed_train[c] = preprocessed_train[c].rolling(window=10, center=True, min_periods=1).mean()
+    if c in preprocessed_test.columns:
+        preprocessed_test[c] = preprocessed_test[c].rolling(window=10, center=True, min_periods=1).mean()
 
 #plot raw vs. smoothed of first 300 julien samples
-julien_raw = combined_data[combined_data["Subject"] == "julien"].reset_index(drop=True)
-julien_pre = preprocessed_data[preprocessed_data["Subject"] == "julien"].reset_index(drop=True)
+julien_raw = train_data[train_data["Subject"] == "julien"].reset_index(drop=True)
+julien_pre = preprocessed_train[preprocessed_train["Subject"] == "julien"].reset_index(drop=True)
 
 plt.figure(figsize=(10, 4))
 plt.plot(
@@ -166,88 +168,65 @@ print("Step 4 Complete: Missing values handled, noise reduced with moving averag
 # ----------------------------------------
 # STEP 5 – FEATURE EXTRACTION + NORMALIZATION
 # ----------------------------------------
-from scipy.stats import skew, kurtosis
 from sklearn.preprocessing import StandardScaler
 
-data = preprocessed_data.copy()
+train_data_prepped = preprocessed_train.copy()
+test_data_prepped = preprocessed_test.copy()
 
 #Determine sampling rate from time differences
-time_diffs = data["Time (s)"].diff().dropna()
+time_diffs = train_data_prepped["Time (s)"].diff().dropna()
 sampling_rate = 1 / time_diffs.median()
 samples_per_window = int(5 * sampling_rate)
 
-#Specify columns for feature extraction
-feature_cols = [
-    "Acceleration x (m/s^2)",
-    "Acceleration y (m/s^2)",
-    "Acceleration z (m/s^2)",
-    "Absolute acceleration (m/s^2)"
-]
+def build_feature_frame(dataframe, window_size):
+    x_list = []
+    y_list = []
+    # Group by subject, activity
+    for (_, act), group_df in dataframe.groupby(["Subject", "Activity"]):
+        group_df = group_df.reset_index(drop=True)
+        for start in range(0, len(group_df) - window_size, window_size):
+            window = group_df.iloc[start:start + window_size]
+            if len(window) == window_size:
+                feats = extract_features(window)
+                x_list.append(feats)
+                y_list.append(act)
+    x_df = pd.DataFrame(x_list)
+    y_series = pd.Series(y_list, name="Label")
+    return x_df, y_series
 
-#Function to extract statistical features from a window
-def extract_features(window):
-    feats = {}
-    for col in feature_cols:
-        if col not in window.columns:
-            continue
-        col_data = window[col]
-        feats[f"{col}_mean"] = col_data.mean()
-        feats[f"{col}_std"] = col_data.std()
-        feats[f"{col}_min"] = col_data.min()
-        feats[f"{col}_max"] = col_data.max()
-        feats[f"{col}_skew"] = skew(col_data)
-        feats[f"{col}_kurtosis"] = kurtosis(col_data)
-        feats[f"{col}_range"] = col_data.max() - col_data.min()
-        feats[f"{col}_median"] = col_data.median()
-        feats[f"{col}_var"] = col_data.var()
-        feats[f"{col}_mad"] = np.mean(np.abs(col_data - col_data.mean()))
-    return feats
+X_train_df, y_train_series = build_feature_frame(train_data_prepped, samples_per_window)
+X_test_df, y_test_series = build_feature_frame(test_data_prepped, samples_per_window)
 
-X_list = []
-y_list = []
-
-# Group by subject, activity
-for (subj, act), group_df in data.groupby(["Subject", "Activity"]):
-    group_df = group_df.reset_index(drop=True)
-    for start in range(0, len(group_df) - samples_per_window, samples_per_window):
-        window = group_df.iloc[start:start + samples_per_window]
-        if len(window) == samples_per_window:
-            feats = extract_features(window)
-            X_list.append(feats)
-            y_list.append(act)
-
-X_df = pd.DataFrame(X_list)
-y_series = pd.Series(y_list, name="Label")
-X_df.fillna(X_df.mean(), inplace=True) #handle missing feature values
+train_means = X_train_df.mean()
+X_train_df.fillna(train_means, inplace=True) #handle missing feature values
+X_test_df = X_test_df.reindex(columns=X_train_df.columns)
+X_test_df.fillna(train_means, inplace=True)
 
 #Normalize features using StandardScaler
 scaler = StandardScaler()
-X_scaled = scaler.fit_transform(X_df)
-X_scaled_df = pd.DataFrame(X_scaled, columns=X_df.columns)
-X_scaled_df["Label"] = y_series.values
+X_train_scaled = scaler.fit_transform(X_train_df)
+X_train_scaled_df = pd.DataFrame(X_train_scaled, columns=X_train_df.columns)
+X_train_scaled_df["Label"] = y_train_series.values
 
-print("Step 5 Complete: Extracted and normalized features.")
+X_test_scaled = scaler.transform(X_test_df)
+X_test_scaled_df = pd.DataFrame(X_test_scaled, columns=X_train_df.columns)
+X_test_scaled_df["Label"] = y_test_series.values
+
+print("Step 5 Complete: Extracted and normalized features (train and held-out test).")
 
 # ----------------------------------------
 # STEP 6 – CLASSIFIER TRAINING + EVALUATION
 # ----------------------------------------
-from sklearn.model_selection import train_test_split, learning_curve
+from sklearn.model_selection import learning_curve
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score, confusion_matrix, ConfusionMatrixDisplay
 import joblib
 
-#Preparing features for training
-X = X_scaled_df.drop("Label", axis=1)
-y = X_scaled_df["Label"]
-
-#Split data into training and test sets
-X_train, X_test, y_train, y_test = train_test_split(
-    X,
-    y,
-    test_size=0.1,
-    random_state=42,
-    stratify=y
-)
+#Preparing features for training/testing
+X_train = X_train_scaled_df.drop("Label", axis=1)
+y_train = X_train_scaled_df["Label"]
+X_test = X_test_scaled_df.drop("Label", axis=1)
+y_test = X_test_scaled_df["Label"]
 
 #Training logistic regression model
 model = LogisticRegression(max_iter=1000)
@@ -299,18 +278,18 @@ plt.show()
 print("Step 6 Complete: Model trained, tested, and learning curves generated.")
 
 #Save trained model and scaler for future use (GUI)
-joblib.dump(model, "logreg_model.pkl")
-joblib.dump(scaler, "scaler.pkl")
+joblib.dump(model, DATA_DIR / "logreg_model.pkl")
+joblib.dump(scaler, DATA_DIR / "scaler.pkl")
 print("Saved logistic regression model to 'logreg_model.pkl' and scaler to 'scaler.pkl'.")
 
 # --------------------------------------
 # STEP 7 – STORE PREPROCESSED + SEGMENTED INTO HDF5
 # -------------------------------------
-with h5py.File("activity_data.h5", "a") as h5f:
+with h5py.File(DATA_DIR / "activity_data.h5", "a") as h5f:
     #Storing preprocessed data per subject
     preprocessed_group = h5f.require_group("preprocessed")
-    for subject in preprocessed_data["Subject"].unique():
-        subject_data = preprocessed_data[preprocessed_data["Subject"] == subject]
+    for subject in preprocessed_train["Subject"].unique():
+        subject_data = preprocessed_train[preprocessed_train["Subject"] == subject]
         numeric = subject_data.select_dtypes(include=[np.number])
         strings = subject_data.select_dtypes(include=["object"]).astype("S")
 
